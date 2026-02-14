@@ -1,0 +1,171 @@
+## Infrastructure Diagram
+                                [USER]
+                                  |
+                                  | 1. Types www.foobar.com in browser
+                                  |
+                                  ▼
+                          [INTERNET / DNS]
+                                  |
+                                  | 2. DNS Resolution
+                                  |    www.foobar.com → 8.8.8.8 (A Record)
+                                  |
+                                  | 3. HTTP/HTTPS Request
+                                  ▼
+                ╔═════════════════════════════════════════╗
+                ║   SERVER (IP: 8.8.8.8)                  ║
+                ║   Domain: foobar.com                    ║
+                ║                                         ║
+                ║   ┌───────────────────────────────┐     ║
+                ║   │  Web Server (Nginx)           │     ║
+                ║   │  Port: 80 (HTTP) / 443 (HTTPS)│     ║
+                ║   │  - Receives requests          │     ║
+                ║   │  - Serves static files        │     ║
+                ║   │  - Acts as reverse proxy      │     ║
+                ║   └──────────┬────────────────────┘     ║
+                ║              │                          ║
+                ║              │ 4. Forwards dynamic      ║
+                ║              │    requests              ║
+                ║              ▼                          ║
+                ║   ┌───────────────────────────────┐     ║
+                ║   │  Application Server           │     ║
+                ║   │  (PHP, Python, Node.js, etc.) │     ║
+                ║   │  - Executes backend code      │     ║
+                ║   │  - Processes business logic   │     ║
+                ║   │  - Generates dynamic content  │     ║
+                ║   └──────────┬────────────────────┘     ║
+                ║              │                          ║
+                ║              │ 5. Loads code            ║
+                ║              ▼                          ║
+                ║   ┌───────────────────────────────┐     ║
+                ║   │  Application Files            │     ║
+                ║   │  (Code Base)                  │     ║
+                ║   │  - HTML templates             │     ║
+                ║   │  - Backend scripts            │     ║
+                ║   │  - Configuration files        │     ║
+                ║   └───────────────────────────────┘     ║
+                ║              │                          ║
+                ║              │ 6. Queries data          ║
+                ║              ▼                          ║
+                ║   ┌───────────────────────────────┐     ║
+                ║   │  Database (MySQL)             │     ║
+                ║   │  Port: 3306                   │     ║
+                ║   │  - Stores persistent data     │     ║
+                ║   │  - Handles SQL queries        │     ║
+                ║   │  - Returns query results      │     ║
+                ║   └───────────────────────────────┘     ║
+                ║              │                          ║
+                ║              │ 7. Data flows back       ║
+                ║              │    through stack         ║
+                ╚══════════════╪══════════════════════════╝
+                               │
+                               │ 8. HTTP Response
+                               ▼
+                            [USER]
+                       (Displays webpage)
+
+## Detailed Explanation of Infrastructure Components
+
+### What is a server?
+
+A server is a physical or virtual computer system that provides resources, 
+services, or data to other computers (called clients) over a network.
+It runs continuously to respond to requests and has sufficient processing power, 
+memory, and storage to handle multiple simultaneous connections.
+In this infrastructure, our single server at IP 8.8.8.8 hosts all the necessary components to deliver the website to users.
+
+### What is the role of the domain name?
+
+The domain name foobar.com serves as a human-readable address that acts as an alias for 
+the server's IP address 8.8.8.8. Instead of users needing to remember and type numerical IP addresses, 
+the domain name provides an easy-to-remember way to access the website. The Domain Name System (DNS) 
+translates the domain name into the corresponding IP address, enabling browsers to locate and connect to the correct server.
+
+### What type of DNS record is www in www.foobar.com?
+
+The www in www.foobar.com is configured as an A record (Address record).
+An A record is a type of DNS record that maps a hostname to an IPv4 address. In this case, 
+the hostname www.foobar.com has an A record pointing to 8.8.8.8. When a user types www.foobar.com, 
+the DNS resolver queries the DNS server, which returns the A record pointing to 8.8.8.8, allowing the user's browser to connect to our server.
+
+### What is the role of the web server (Nginx)?
+
+The web server (Nginx) acts as the first point of contact for incoming requests and serves multiple critical functions.
+It receives HTTP/HTTPS requests by listening on ports 80 (HTTP) and 443 (HTTPS) for incoming connections from users' browsers.
+It serves static content by directly delivering static files like HTML, CSS, JavaScript, images, 
+and videos without involving the application server. It acts as a reverse proxy by forwarding dynamic requests (requiring server-side processing) 
+to the application server. Additionally, it handles SSL/TLS termination for encryption/decryption of HTTPS connections, 
+implements caching to store frequently accessed content for improved response times, and provides basic security protection against common attacks while implementing rate limiting.
+
+### What is the role of the application server?
+
+The application server is responsible for executing the backend logic of the website.
+It executes application code by running the programming language runtime (PHP, Python, Node.js, Ruby, Java, etc.).
+It processes business logic, handling the core functionality like user authentication, form processing, calculations, 
+and data validation. It generates dynamic content by creating HTML pages dynamically based on user requests and data from the database.
+It manages database interaction by communicating with the MySQL database to retrieve, insert, update, or delete data.
+The application server maintains user sessions and state across multiple requests through session management, 
+and handles RESTful API requests if the application provides an API. The application server essentially brings the website to life by executing the code that makes it interactive and functional.
+
+### What is the role of the database (MySQL)?
+
+The database is the persistent storage layer that manages all the website's data.
+It stores structured data in tables such as users, products, posts, comments, and settings.
+It processes SQL queries received from the application server (SELECT, INSERT, UPDATE, DELETE).
+It enforces constraints, relationships, and rules to maintain data consistency and integrity.
+It manages multiple simultaneous database operations without conflicts through concurrency control.
+It ensures data operations are completed successfully or rolled back in case of errors through transaction management.
+It returns requested information to the application server in a structured format and optimizes query performance through strategic indexing.
+Without the database, the website would have no way to remember user accounts, store content, or maintain any persistent information between visits.
+
+### What protocol does the server use to communicate with the user's computer?
+
+The server communicates with the user's computer using the HTTP (Hypertext Transfer Protocol) or HTTPS (HTTP Secure) protocol, 
+hich runs over TCP/IP (Transmission Control Protocol/Internet Protocol). The communication flow works as follows: First, 
+the user's browser queries DNS to get IP address 8.8.8.8. Then, the browser establishes a TCP connection with the server through a 3-way handshake. 
+Next, the browser sends an HTTP request (GET, POST, etc.) to the server.
+The server processes the request through the web server, application server, and database.
+Finally, the server sends back an HTTP response containing status code, headers, and content (HTML, JSON, etc.), 
+which the browser receives and renders for the user. If HTTPS is used, an additional TLS handshake occurs after the TCP connection to establish an encrypted channel before any HTTP data is transmitted.
+
+## Issues with This Infrastructure
+
+### 1. SPOF (Single Point of Failure)
+
+The entire infrastructure depends on a single physical or virtual server. If this server experiences any failure, 
+the entire website becomes unavailable. Failure scenarios include hardware failure (CPU, RAM, disk, power supply), 
+network connectivity issues, operating system crashes, power outages at the data center, or software bugs causing system crashes.
+The impact is complete service disruption with no redundancy or backup to take over.
+Users cannot access the website at all until the server is restored. In a real-world scenario,
+if the server fails on a Friday evening and the data center technician isn't available until Monday morning,
+the website could be down for the entire weekend, resulting in lost revenue, damaged reputation, frustrated users,
+and potential loss of customers to competitors. There is no failover mechanism, no backup server to automatically take over,
+and no load distribution to other servers.
+
+### 2. Downtime when maintenance needed (like deploying new code web server needs to be restarted)
+
+Any maintenance activity requires stopping or restarting services, which causes downtime. When deploying new code,
+the application server must be restarted to load the new version, causing service interruption.
+Web server configuration changes require Nginx to be reloaded or restarted. Database schema updates or migrations may require taking the database offline temporarily.
+Operating system updates and security patches often require a full server reboot.
+During these maintenance windows, users experience "503 Service Unavailable" errors or connection timeouts, 
+cannot complete transactions or access information, and may abandon the site and not return.
+Even a brief 5-minute deployment can affect thousands of users.
+Common deployment scenarios illustrate this problem: deploying a bug fix during business hours means the site goes down for 2-5 minutes, 
+updating SSL certificates requires web server restart, and database migrations can take 10-30 minutes during which the site is completely unavailable.
+There is no ability to perform rolling updates, no staging environment on a separate server to test before deployment, and no blue-green deployment strategy to switch between versions without downtime.
+
+### 3. Cannot scale if too much incoming traffic
+
+A single server has finite resources (CPU, RAM, bandwidth, disk I/O) that limit how many concurrent users it can serve.
+When traffic exceeds server capacity, several problems occur: response times increase dramatically (pages take 10-20 seconds to load instead of under 1 second), the server becomes overloaded and may crash completely,
+new connections are refused (users see "connection timed out"), and the database becomes a bottleneck as too many queries queue up. Real-world scaling limitations include:
+if the server can handle 100 concurrent users comfortably but suddenly 1,000 users arrive (due to viral content, marketing campaign, or being featured on popular sites),
+the site becomes unusable for everyone. CPU usage hits 100%, memory runs out causing swap usage, and database connection pools become exhausted. There is no horizontal scaling (adding more servers to distribute load), 
+no ability to scale individual components independently (you can't add just more application servers or just more database capacity), no content delivery network (CDN) to offload static content, and no caching layer to reduce database load.
+The only scaling option is vertical scaling (upgrading to a larger server), which has limits, costs more, requires downtime to migrate, and still represents a single point of failure.
+
+### Summary of Critical Limitations
+
+This simple web stack, while easy to set up and manage for small projects or learning purposes, is fundamentally unsuitable for production websites that require high availability, scalability, or zero-downtime deployments.
+Any serious production environment needs redundancy through multiple servers, load balancing to distribute traffic, automated failover mechanisms, separate database servers with replication, caching layers (Redis, Memcached) to reduce database load, 
+content delivery networks for static assets, monitoring and alerting systems to detect issues proactively, and staging environments for safe testing before production deployment.
