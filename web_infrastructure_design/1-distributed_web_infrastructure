@@ -1,0 +1,189 @@
+# 1. Distributed Web Infrastructure
+
+## Infrastructure Diagram
+```
+                                    [USER]
+                                      |
+                                      | 1. Types www.foobar.com
+                                      |
+                                      ▼
+                              [INTERNET / DNS]
+                                      |
+                                      | 2. DNS Resolution
+                                      |    www.foobar.com → Load Balancer IP
+                                      |
+                                      | 3. HTTP Request
+                                      ▼
+                    ╔═════════════════════════════════════╗
+                    ║   LOAD BALANCER (HAproxy)           ║
+                    ║   IP: 203.0.113.10                  ║
+                    ║                                     ║
+                    ║   Distribution Algorithm:           ║
+                    ║   Round Robin                       ║
+                    ║                                     ║
+                    ║   Setup: Active-Active              ║
+                    ╚══════════════╦══════════════════════╝
+                                   |
+                     ┌─────────────┴─────────────┐
+                     |                           |
+                     ▼                           ▼
+      ╔══════════════════════════╗   ╔══════════════════════════╗
+      ║ SERVER 1 (8.8.8.8)       ║   ║ SERVER 2 (8.8.8.9)       ║
+      ║                          ║   ║                          ║
+      ║ ┌──────────────────────┐ ║   ║ ┌──────────────────────┐ ║
+      ║ │ Web Server (Nginx)   │ ║   ║ │ Web Server (Nginx)   │ ║
+      ║ │ - Receives requests  │ ║   ║ │ - Receives requests  │ ║
+      ║ │ - Serves static      │ ║   ║ │ - Serves static      │ ║
+      ║ └──────────┬───────────┘ ║   ║ └──────────┬───────────┘ ║
+      ║            │             ║   ║            │             ║
+      ║            ▼             ║   ║            ▼             ║
+      ║ ┌──────────────────────┐ ║   ║ ┌──────────────────────┐ ║
+      ║ │ Application Server   │ ║   ║ │ Application Server   │ ║
+      ║ │ - Executes code      │ ║   ║ │ - Executes code      │ ║
+      ║ │ - Business logic     │ ║   ║ │ - Business logic     │ ║
+      ║ └──────────┬───────────┘ ║   ║ └──────────┬───────────┘ ║
+      ║            │             ║   ║            │             ║
+      ║            ▼             ║   ║            ▼             ║
+      ║ ┌──────────────────────┐ ║   ║ ┌──────────────────────┐ ║
+      ║ │ Application Files    │ ║   ║ │ Application Files    │ ║
+      ║ │ (Code Base)          │ ║   ║ │ (Code Base)          │ ║
+      ║ └──────────┬───────────┘ ║   ║ └──────────┬───────────┘ ║
+      ║            │             ║   ║            │             ║
+      ║            ▼             ║   ║            ▼             ║
+      ║ ┌──────────────────────┐ ║   ║ ┌──────────────────────┐ ║
+      ║ │ MySQL Database       │ ║   ║ │ MySQL Database       │ ║
+      ║ │ PRIMARY (Master)     │ ║   ║ │ REPLICA (Slave)      │ ║
+      ║ │ - Handles writes     │ ║   ║ │ - Handles reads      │ ║
+      ║ │ - Replicates to →    │◄══╬═══╬═► - Syncs from Primary│ ║
+      ║ └──────────────────────┘ ║   ║ └──────────────────────┘ ║
+      ║                          ║   ║                          ║
+      ╚══════════════════════════╝   ╚══════════════════════════╝
+                     │                           │
+                     └───────────┬───────────────┘
+                                 │
+                                 ▼
+                              [USER]
+                        (Receives response)
+```
+
+## Explanation of Additional Elements
+
+### Why are we adding a Load Balancer (HAproxy)?
+
+The load balancer is added to distribute incoming traffic across multiple servers, solving the scalability problem from the simple web stack. It provides several critical benefits: it distributes the load so no single server becomes overwhelmed, allows the infrastructure to handle more concurrent users by leveraging multiple servers, provides redundancy so if one server fails the other can continue serving traffic, enables horizontal scaling by making it easy to add more servers as traffic grows, and acts as a single entry point for all client requests, simplifying DNS configuration. Without the load balancer, we would need separate DNS records for each server, and clients would have no automatic failover if a server went down.
+
+### Why are we adding a second server?
+
+Adding a second server eliminates the single point of failure from the previous infrastructure and provides redundancy. If Server 1 fails, Server 2 can continue serving all traffic through the load balancer. It doubles the capacity to handle concurrent users and requests, improves overall performance by sharing the workload, and allows for zero-downtime maintenance since we can take one server offline for updates while the other continues serving traffic. This is the foundation of high availability architecture.
+
+### Why does each server have its own full stack (Nginx, Application Server, Application Files)?
+
+Each server needs a complete copy of the web stack to function independently and serve requests without depending on the other server. This ensures true redundancy where each server can handle the full request lifecycle from receiving HTTP requests through Nginx, processing business logic in the application server, executing the code from application files, and accessing the database. If servers shared components (for example, if they shared a single web server or application server), that shared component would become a single point of failure, defeating the purpose of having multiple servers.
+
+### Why are we adding database replication (Primary-Replica)?
+
+Database replication is added to improve read performance and provide data redundancy. The Primary database handles all write operations (INSERT, UPDATE, DELETE) while the Replica can handle read operations (SELECT), distributing the database load. This setup provides data backup since the Replica maintains a copy of all data, allows for faster read queries by distributing them across multiple databases, provides failover capability where the Replica can be promoted to Primary if the Primary fails, and enables better performance for read-heavy applications which are common in web applications where reads typically outnumber writes by 10:1 or more.
+
+## Load Balancer Configuration
+
+### Distribution Algorithm: Round Robin
+
+The load balancer is configured with the Round Robin distribution algorithm. This algorithm works by distributing requests sequentially and evenly across all available servers in a circular order. When the first request arrives, it goes to Server 1. The second request goes to Server 2. The third request goes back to Server 1. The fourth request goes to Server 2, and so on. The algorithm maintains a pointer to the last server that received a request and moves to the next server in the list for each new request. When it reaches the end of the server list, it wraps around to the beginning.
+
+How Round Robin works in practice: If we receive 100 requests, approximately 50 will go to Server 1 and 50 will go to Server 2, assuming both servers are healthy and available. This ensures equal distribution of load across all servers.
+
+Advantages of Round Robin: It is simple to implement and understand, provides fair distribution of requests across all servers, works well when all servers have similar capacity and performance characteristics, and has low overhead with minimal computational cost.
+
+Limitations of Round Robin: It does not account for current server load (a busy server gets the same number of requests as an idle one), does not consider server capacity differences (treats all servers equally even if some are more powerful), does not account for request complexity (a heavy request counts the same as a light one), and can cause session problems if not combined with session persistence since consecutive requests from the same user may go to different servers.
+
+Alternative algorithms that could be used: Least Connections sends requests to the server with fewest active connections, which is better for requests with varying processing times. Weighted Round Robin assigns different weights to servers based on their capacity, useful when servers have different hardware specifications. IP Hash routes requests from the same client IP to the same server, providing session persistence. Least Response Time sends requests to the server with the fastest response time, optimizing for performance.
+
+### Active-Active vs Active-Passive Setup
+
+This infrastructure is configured in an Active-Active setup, where both servers actively handle traffic simultaneously. Both Server 1 and Server 2 receive requests from the load balancer at the same time, both servers are processing user requests concurrently, traffic is distributed between both servers (using Round Robin), and both servers share the workload equally.
+
+Benefits of Active-Active: It provides better resource utilization since both servers are working and none sits idle, offers higher total capacity because the combined power of both servers is available, delivers better performance under normal conditions with load distributed across multiple servers, and is more cost-effective as you are using all the hardware you are paying for.
+
+Drawbacks of Active-Active: It has more complex configuration requiring session management and data synchronization, needs both servers to be equally capable of handling the full application stack, requires careful session handling to ensure users have consistent experience across servers, and has more complex failover since both servers need to be monitored.
+
+In contrast, an Active-Passive setup would work differently: Only Server 1 (active) would handle all traffic under normal conditions. Server 2 (passive) would sit idle, waiting as a hot standby. The passive server only takes over if the active server fails. All traffic goes to one server until failure occurs.
+
+Benefits of Active-Passive: It has simpler configuration with no need for load distribution logic, easier session management since all requests go to one server, simpler data consistency as only one server writes to the database at a time, and clear failover path with the passive server ready to take over.
+
+Drawbacks of Active-Passive: It has wasted resources since the passive server sits idle most of the time, lower total capacity as only one server handles requests, no performance improvement under normal load, and higher cost per unit of capacity since you are paying for a server that does nothing most of the time.
+
+For this infrastructure, Active-Active is the better choice because we want to maximize resource utilization, need to handle higher traffic volumes than a single server can manage, want to improve performance under normal conditions, and are willing to handle the additional complexity of distributed request handling.
+
+## Database Primary-Replica (Master-Slave) Cluster
+
+### How Primary-Replica Replication Works
+
+A Primary-Replica cluster consists of two or more database servers where one acts as the Primary (Master) and the others act as Replicas (Slaves). The Primary database is the authoritative source of data and handles all write operations. When data is written to the Primary, it is automatically replicated to all Replica databases.
+
+The replication process works as follows: A client application sends a write query (INSERT, UPDATE, DELETE) to the Primary database. The Primary executes the query and modifies its data. The Primary records the change in a binary log (binlog), which is a log file containing all data modifications. The Replica databases continuously read the Primary's binary log. The Replica databases apply the same changes to their own data, keeping them synchronized with the Primary. Read queries (SELECT) can be sent to either the Primary or any Replica.
+
+Replication methods include asynchronous replication where the Primary does not wait for Replicas to confirm they have received the data, which provides better performance but slight delay before Replicas have the latest data (usually milliseconds to seconds). There is also semi-synchronous replication where the Primary waits for at least one Replica to acknowledge receiving the data, which has slower writes but better data safety. Synchronous replication waits for all Replicas to confirm before completing the write, providing maximum data safety but significantly slower writes.
+
+For this infrastructure, we would typically use asynchronous replication because it provides the best balance of performance and data safety for most web applications, does not significantly impact write performance, and has acceptable replication lag for most use cases (typically under 1 second).
+
+### Difference Between Primary Node and Replica Node
+
+The Primary node (Master) handles all write operations including INSERT, UPDATE, and DELETE statements. It can also handle read operations (SELECT) but typically does not in optimized setups. It is the authoritative source of data and the single source of truth. All data changes originate here, and it maintains the binary log for replication. The Primary controls the replication process.
+
+The Replica node (Slave) handles read operations (SELECT statements) only. It receives data changes from the Primary via replication and continuously synchronizes with the Primary by reading and applying binary log entries. It cannot accept write operations directly (writes would not replicate to Primary or other Replicas). It serves as a backup copy of the data and can be promoted to Primary if the Primary fails.
+
+### In Regard to the Application
+
+From the application's perspective, there are important differences in how it interacts with each node. For write operations, the application must connect to the Primary database for all INSERT, UPDATE, DELETE operations. Any attempt to write to a Replica will fail or produce data inconsistency. User registration, profile updates, new posts, comments, and orders must all go to the Primary.
+
+For read operations, the application can connect to either Primary or Replicas for SELECT queries. Best practice is to route most reads to Replicas to reduce load on the Primary. Heavy queries, reports, and analytics should go to Replicas. The application needs two separate database connection strings: one pointing to the Primary (for writes) and one pointing to Replicas (for reads).
+
+Connection management in application code typically looks like this: the application configures a write connection to the Primary database server, configures one or more read connections to Replica database servers, routes all INSERT, UPDATE, DELETE queries through the write connection, and routes SELECT queries through read connections. This can be done manually in code or using database middleware.
+
+Replication lag considerations are important. There is a small delay (usually milliseconds, sometimes seconds) between when data is written to the Primary and when it appears on Replicas. If a user creates a post and immediately tries to view it, the application might read from a Replica that has not yet received the new post, causing a "write-then-read" inconsistency. Solutions include reading from Primary immediately after writes for that user session, implementing cache or session-based temporary storage, waiting for replication to catch up before redirecting, or using semi-synchronous replication for critical data.
+
+## Issues with This Infrastructure
+
+### 1. SPOF (Single Points of Failure)
+
+Despite adding redundancy, this infrastructure still has several single points of failure.
+
+The Load Balancer is a critical SPOF. If HAproxy fails, no traffic can reach either server, causing complete service outage even though both servers are healthy and running. The entire infrastructure depends on this single load balancer. There is no redundancy for the load balancer itself. Solution: Implement load balancer redundancy with two load balancers in a high-availability pair using keepalived or similar, configure a floating IP that moves between load balancers, and set up health checks so the backup takes over automatically.
+
+The Primary Database is a SPOF for write operations. If the Primary database fails, no write operations can occur (no new users, posts, orders, updates). The website becomes read-only even though Replicas can still serve read queries. The Replica cannot automatically become the Primary without manual intervention. Solution: Implement automatic failover with tools like MySQL Replication Manager (MRM), Orchestrator, or ProxySQL, configure one Replica to automatically promote to Primary when the Primary fails, and update application connections automatically to the new Primary.
+
+The network connection is a SPOF. If the network link to the data center fails, the entire infrastructure becomes unreachable. If DNS fails, users cannot resolve www.foobar.com. Solution: Use multiple network providers, implement DNS redundancy with multiple DNS providers, and configure BGP routing for automatic failover.
+
+Each server's hardware is still a potential SPOF. While we have two servers, if both fail simultaneously (data center power loss, network outage, natural disaster), the entire service goes down. Solution: Deploy servers across multiple data centers or availability zones, implement geographic redundancy, and use cloud provider features for multi-region deployment.
+
+### 2. Security Issues
+
+This infrastructure has critical security vulnerabilities that expose it to attacks and data breaches.
+
+No Firewall protection means all servers are directly exposed to the internet without any filtering, anyone can attempt to connect to any port on any server, the database ports (3306) are potentially accessible from the internet allowing direct database attacks, SSH ports (22) are open to brute-force attacks, and there is no protection against DDoS attacks or malicious traffic. Consequences include database compromise through direct attacks, server compromise through SSH brute-force, data theft or corruption, service disruption from attacks, and compliance violations for regulated industries. Solution: Implement firewall rules on each server using iptables or ufw, allow only necessary ports (80, 443 from load balancer, 3306 only between database servers, 22 only from specific admin IPs), deploy a Web Application Firewall (WAF) to filter malicious HTTP traffic, use cloud provider security groups or network ACLs, and implement intrusion detection/prevention systems (IDS/IPS).
+
+No HTTPS encryption means all traffic between users and the load balancer is unencrypted HTTP. User passwords are transmitted in plain text over the internet. Session cookies can be intercepted (session hijacking). Credit card information and personal data are exposed. Man-in-the-middle attacks can intercept and modify traffic. ISPs and network operators can see all user activity. Consequences include credential theft, identity theft, data breaches, compliance violations (PCI-DSS, GDPR, HIPAA), loss of user trust, and SEO penalties as Google ranks HTTPS sites higher. Solution: Install SSL/TLS certificates on the load balancer (using Let's Encrypt for free certificates or commercial certificates for enhanced trust), configure HAproxy to handle HTTPS on port 443, redirect all HTTP traffic to HTTPS, implement HTTP Strict Transport Security (HSTS) headers, use strong cipher suites and disable weak protocols (SSL v3, TLS 1.0), and regularly update certificates before expiration.
+
+No authentication or authorization controls means there is no verification of who is accessing the infrastructure, no role-based access control for administrative functions, no audit trail of who made changes, and anyone who gains access has full control. Solution: Implement SSH key-based authentication, disable password authentication, use multi-factor authentication (MFA) for admin access, implement role-based access control (RBAC), maintain audit logs of all administrative access, and use bastion hosts or VPN for administrative access.
+
+Database security issues include the Primary database is potentially accessible from the internet, no encryption of data at rest or in transit between servers, database credentials might be hardcoded in application files, and no database user privilege separation (application might use root account). Solution: Encrypt data in transit using SSL/TLS for database connections, encrypt data at rest using MySQL encryption features, restrict database access to only application servers, use strong unique passwords for database accounts, implement principle of least privilege for database users, and store credentials in environment variables or secret management systems.
+
+### 3. No Monitoring
+
+Without monitoring, the operations team is blind to the health and performance of the infrastructure.
+
+No visibility into system health means you do not know if servers are running out of resources, cannot detect when services crash or become unresponsive, have no warning before complete failure occurs, and cannot identify performance degradation before users complain. Consequences include unexpected downtime, poor user experience due to undetected slowness, inability to plan capacity upgrades, reactive instead of proactive problem solving, and longer mean time to recovery (MTTR) because you first have to discover there is a problem.
+
+No performance metrics means you do not know CPU, memory, or disk usage trends, cannot identify bottlenecks in the application, have no data to support infrastructure decisions, and cannot optimize resource allocation. Without metrics you cannot answer questions like: Which server is handling more load? Is the database becoming a bottleneck? Do we need more servers or better servers? When should we scale up?
+
+No application monitoring means you do not know how many requests are being served, cannot track response times or error rates, have no visibility into user experience, and cannot detect application-level failures that do not crash the server. A slow database query might make the site unusable but all servers would appear "healthy."
+
+No alerting system means you discover problems when users complain or when you manually check, nighttime or weekend failures go unnoticed for hours, and small issues escalate into major outages before anyone notices. Solution: Implement comprehensive monitoring with Prometheus + Grafana for metrics visualization, Nagios or Zabbix for infrastructure monitoring, ELK Stack (Elasticsearch, Logstash, Kibana) or Splunk for log aggregation, application performance monitoring (APM) tools like New Relic or Datadog, uptime monitoring with external services like Pingdom or UptimeRobot, and configure alerting via email, SMS, Slack, or PagerDuty.
+
+Critical metrics to monitor include server metrics (CPU usage, memory usage, disk space, disk I/O, network traffic), application metrics (requests per second, response times, error rates, active users), database metrics (query performance, replication lag, connection pool usage, slow queries), load balancer metrics (requests distributed, backend server health, response codes), and business metrics (new user signups, completed transactions, revenue).
+
+No backup and disaster recovery monitoring means you do not know if backups are running successfully, cannot verify backup integrity, have no tested recovery procedures, and might discover backup failures only when you need to restore. Solution: Implement automated backup systems, test restore procedures regularly, monitor backup job success/failure, maintain offsite backup copies, and document disaster recovery procedures.
+
+## Summary
+
+This distributed web infrastructure represents a significant improvement over the simple web stack by introducing redundancy, load distribution, and database replication. It can handle more traffic, provides better availability, and allows for maintenance without complete downtime. However, it still has critical weaknesses in single points of failure (particularly the load balancer and Primary database), lacks essential security controls (firewall, HTTPS, authentication), and has no monitoring or alerting capabilities. A production-ready infrastructure would need to address all these issues with additional redundancy, comprehensive security measures, and robust monitoring and alerting systems.
