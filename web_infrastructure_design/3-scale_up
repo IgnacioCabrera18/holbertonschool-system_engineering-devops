@@ -1,0 +1,139 @@
+## Infrastructure Diagram
+```
+                                    [USER]
+                                      |
+                                      | 1. Types www.foobar.com
+                                      |
+                                      ▼
+                              [INTERNET / DNS]
+                                      |
+                                      | 2. DNS resolves to LB Cluster IP
+                                      |
+                                      ▼
+                ╔════════════════════════════════════╗
+                ║  LOAD BALANCER CLUSTER (HAProxy)   ║
+                ║                                    ║
+                ║  ┌──────────────────────────────┐  ║
+                ║  │  LB1 (Active)                │  ║
+                ║  │  - Handles traffic           │  ║
+                ║  │  - Monitors LB2              │  ║
+                ║  └──────────────────────────────┘  ║
+                ║              ↕                     ║
+                ║        Keepalived/VRRP             ║
+                ║              ↕                     ║
+                ║  ┌──────────────────────────────┐  ║
+                ║  │  LB2 (Standby/Active)        │  ║
+                ║  │  - Ready for failover        │  ║
+                ║  │  - Synced configuration      │  ║
+                ║  └──────────────────────────────┘  ║
+                ╚════════════════╦═══════════════════╝
+                                 |
+                                 | 3. Routes to Web Server
+                                 |
+                ┌────────────────┴────────────────┐
+                |                                 |
+                ▼                                 ▼
+    ╔═══════════════════════╗       ╔═══════════════════════╗
+    ║ WEB SERVER 1          ║       ║ WEB SERVER 2          ║
+    ║ (Nginx)               ║       ║ (Nginx)               ║
+    ║                       ║       ║                       ║
+    ║ - Serves static files ║       ║ - Serves static files ║
+    ║ - SSL termination     ║       ║ - SSL termination     ║
+    ║ - Reverse proxy       ║       ║ - Reverse proxy       ║
+    ╚═══════════╦═══════════╝       ╚═══════════╦═══════════╝
+                |                                 |
+                └────────────────┬────────────────┘
+                                 |
+                                 | 4. Forwards to App Server
+                                 |
+                ┌────────────────┴────────────────┐
+                |                                 |
+                ▼                                 ▼
+    ╔═══════════════════════╗       ╔═══════════════════════╗
+    ║ APP SERVER 1          ║       ║ APP SERVER 2          ║
+    ║ (Application)         ║       ║ (Application)         ║
+    ║                       ║       ║                       ║
+    ║ - Executes code       ║       ║ - Executes code       ║
+    ║ - Business logic      ║       ║ - Business logic      ║
+    ║ - Database queries    ║       ║ - Database queries    ║
+    ╚═══════════╦═══════════╝       ╚═══════════╦═══════════╝
+                |                                 |
+                └────────────────┬────────────────┘
+                                 |
+                                 | 5. Queries Database
+                                 |
+                ┌────────────────┴────────────────┐
+                |                                 |
+                ▼                                 ▼
+    ╔═══════════════════════╗       ╔═══════════════════════╗
+    ║ DATABASE 1            ║       ║ DATABASE 2            ║
+    ║ (MySQL)               ║       ║ (MySQL)               ║
+    ║                       ║       ║                       ║
+    ║ PRIMARY (Master)      ║═══════►║ REPLICA (Slave)       ║
+    ║ - Handles writes      ║       ║ - Handles reads       ║
+    ║ - Handles reads       ║       ║ - Read-only           ║
+    ║ - Replicates data     ║       ║ - Syncs from Primary  ║
+    ╚═══════════════════════╝       ╚═══════════════════════╝
+                |                                 |
+                └────────────────┬────────────────┘
+                                 |
+                                 | 6. Response back through stack
+                                 ▼
+                              [USER]
+```
+
+## Step-by-Step Request Flow
+
+1. User types www.foobar.com in the browser
+2. DNS resolves domain to Load Balancer Cluster Virtual IP
+3. Active load balancer receives request and picks a web server (round robin)
+4. Web server (Nginx) serves static content or forwards dynamic requests to app server
+5. App server executes application code and queries database (writes to Primary, reads from Replica)
+6. Database returns data to app server
+7. App server generates response and sends to web server
+8. Web server sends response back through load balancer to user
+
+## Application Server vs Web Server
+
+### Web Server (Nginx)
+A web server handles HTTP/HTTPS requests and serves content. It is optimized for handling many concurrent connections efficiently. In this infrastructure, web servers only handle HTTP logic including receiving HTTP/HTTPS requests, serving static files (HTML, CSS, JS, images), SSL/TLS termination and encryption, acting as reverse proxy to forward dynamic requests to app servers, implementing caching and compression, and managing connections. Web servers are lightweight and fast, requiring low CPU and memory.
+
+### Application Server
+An application server executes backend application code and business logic. It runs the actual application (Python, PHP, Node.js, Ruby, Java) and processes complex operations. In this infrastructure, application servers only run application logic including executing backend code, processing business logic, handling authentication and sessions, making database queries, generating dynamic content, and processing API requests. Application servers are resource-intensive, requiring high CPU and memory for code execution.
+
+### Key Difference
+Web servers handle HTTP protocol and serve files. Application servers execute code and process logic. Separating them allows each to focus on its task and scale independently based on different needs.
+
+## Explanation of Additional Elements
+
+### Why are we adding 1 server (Load Balancer 2)?
+
+We add a second load balancer to create a load balancer cluster and eliminate the load balancer as a single point of failure (SPOF). In previous infrastructure, if the single load balancer failed, the entire website became unreachable even though backend servers were healthy. With two load balancers configured as a cluster, we achieve high availability at the entry point. Both load balancers share a Virtual IP using VRRP (Virtual Router Redundancy Protocol). They exchange heartbeat messages to monitor each other's health. If the active load balancer fails, the standby automatically takes over the Virtual IP within seconds, providing automatic failover with no manual intervention. This eliminates downtime at the load balancer level and allows zero-downtime maintenance by updating one load balancer while the other handles traffic.
+
+The cluster can be configured as Active-Active where both load balancers handle traffic simultaneously, sharing the load and providing maximum capacity. Or as Active-Passive where one load balancer is primary and handles all traffic while the other waits as backup and only takes over if the primary fails. Active-Passive is simpler to configure and commonly used for high availability.
+
+### Why are we splitting components (web, application, database) into separate servers?
+
+We split servers for each component to prevent one layer from overloading the others and make it easier to scale each layer individually. When all components are on the same server, they compete for resources (CPU, memory, disk). A database query spike slows down the web server, a traffic surge affects application performance, and updating one component requires restarting the entire server.
+
+By separating components we achieve several benefits. First, independent scaling allows us to add more web servers during traffic spikes without adding expensive database servers, add more app servers for processing power without scaling web tier, and add more database replicas for read performance without affecting other tiers. Second, resource optimization means web servers get hardware optimized for network I/O and connections, app servers get high CPU and memory for code execution, and database servers get fast SSD storage and RAM for caching. Third, performance improvement occurs because components don't compete for resources, each layer uses 100 percent of its server's resources, and no resource contention means faster response times. Fourth, easier maintenance allows updating web servers without touching application code, deploying new app code without restarting web servers, and performing database maintenance without affecting web traffic. Fifth, better security through network isolation creates DMZ for web servers (internet-facing), private network for app servers (only accessible from web tier), and restricted network for databases (only accessible from app tier). If one layer is compromised, other layers remain protected. Finally, fault isolation means if one app server crashes, web servers route to healthy app servers, and failures don't cascade across all components.
+
+This three-tier architecture (Presentation → Application → Data) is industry standard for scalable web applications.
+
+### How does the Load Balancer Cluster eliminate SPOF?
+
+HAProxy is now clustered meaning both load balancers can handle requests. They use keepalived to share a Virtual IP address. Both load balancers have identical configurations and SSL certificates. They monitor each other with heartbeat messages every second. If LB1 fails (hardware failure, software crash, network issue), LB2 detects the failure within 3 seconds and automatically takes over the Virtual IP. DNS points to the Virtual IP, so users are automatically routed to the active load balancer. Failover is automatic with typical downtime of 3-5 seconds. This eliminates SPOF at load balancer level and provides true high availability.
+
+### How does database split (Primary-Replica) help?
+
+We split databases into MySQL Primary that handles writes and MySQL Replica that handles reads. The Primary database accepts all write operations (INSERT, UPDATE, DELETE) and replicates changes to the Replica. The Replica database handles read operations (SELECT), is read-only, and continuously syncs data from Primary. This setup reduces load on the main database since reads are distributed to replicas and most web applications have 80-90 percent reads and only 10-20 percent writes. It improves performance as the Primary focuses on writes while replicas handle reads, allowing more concurrent users. It provides data redundancy where the Replica maintains a copy of all data and can be promoted to Primary if it fails. It enables read scalability by adding more replicas as read traffic grows without affecting write performance.
+
+Application servers connect to Primary for writes (user registration, new posts, updates) and connect to Replicas for reads (viewing posts, user profiles, search results).
+
+## Benefits of This Architecture
+
+This scaled infrastructure provides several key advantages. It eliminates single points of failure through load balancer cluster with automatic failover, multiple web servers for redundancy, multiple app servers for redundancy, and database replication for data redundancy. It enables independent scaling where each layer (web, app, database) scales independently based on its specific bottleneck, allowing horizontal scaling by adding more servers to the layer that needs capacity, and avoiding waste by not scaling components that don't need it. It optimizes performance through dedicated resources per component type with no resource contention, better caching strategies per layer, and faster response times. It enhances security via network segmentation between tiers, firewalls between each layer, and database not directly accessible from internet. It allows zero-downtime maintenance by updating one server at a time and enabling rolling deployments with no user impact. Finally, it improves cost efficiency by paying only for resources needed per tier and right-sizing servers for their specific role.
+
+## Summary
+
+This scale-up infrastructure represents a production-ready architecture that eliminates single points of failure, enables independent scaling of each tier, and optimizes resource usage. By adding a load balancer cluster, we achieve high availability at the entry point. By separating web, application, and database servers into dedicated tiers, we enable independent scaling, resource optimization, and improved performance. Each layer can scale horizontally by adding more servers based on demand, making this architecture suitable for handling significant traffic growth while maintaining reliability and performance.
