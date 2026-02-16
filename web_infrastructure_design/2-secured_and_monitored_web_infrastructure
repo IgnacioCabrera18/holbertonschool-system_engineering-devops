@@ -1,0 +1,143 @@
+## Infrastructure Diagram
+```
+                                    [USER]
+                                      |
+                                      | 1. Types https://www.foobar.com
+                                      |
+                                      ▼
+                              [INTERNET / DNS]
+                                      |
+                                      | 2. DNS resolves to Load Balancer IP
+                                      |
+                                      ▼
+                         ╔═══════════════════════╗
+                         ║   FIREWALL 1          ║
+                         ║   - Filters traffic   ║
+                         ║   - Allows 80, 443    ║
+                         ╚═══════════╦═══════════╝
+                                     |
+                                     ▼
+                    ╔════════════════════════════════╗
+                    ║   LOAD BALANCER (HAProxy)      ║
+                    ║   + SSL CERTIFICATE            ║
+                    ║   - Terminates HTTPS           ║
+                    ║   - Decrypts traffic           ║
+                    ║   - Round Robin distribution   ║
+                    ╚════════╦═══════════════╦═══════╝
+                             |               |
+                ┌────────────┘               └────────────┐
+                |                                         |
+                ▼                                         ▼
+    ╔═══════════════════════╗               ╔═══════════════════════╗
+    ║   FIREWALL 2          ║               ║   FIREWALL 3          ║
+    ║   - Blocks unwanted   ║               ║   - Blocks unwanted   ║
+    ╚═══════════╦═══════════╝               ╚═══════════╦═══════════╝
+                |                                       |
+                ▼                                       ▼
+    ╔═══════════════════════╗               ╔═══════════════════════╗
+    ║ SERVER 1 (8.8.8.8)    ║               ║ SERVER 2 (8.8.8.9)    ║
+    ║                       ║               ║                       ║
+    ║ ┌───────────────────┐ ║               ║ ┌───────────────────┐ ║
+    ║ │ Monitoring Client │ ║               ║ │ Monitoring Client │ ║
+    ║ │ (Sumologic Agent) │ ║               ║ │ (Sumologic Agent) │ ║
+    ║ └─────────┬─────────┘ ║               ║ └─────────┬─────────┘ ║
+    ║           │           ║               ║           │           ║
+    ║ ┌─────────▼─────────┐ ║               ║ ┌─────────▼─────────┐ ║
+    ║ │ Web Server        │ ║               ║ │ Web Server        │ ║
+    ║ │ (Nginx)           │ ║               ║ │ (Nginx)           │ ║
+    ║ └─────────┬─────────┘ ║               ║ └─────────┬─────────┘ ║
+    ║           │           ║               ║           │           ║
+    ║ ┌─────────▼─────────┐ ║               ║ ┌─────────▼─────────┐ ║
+    ║ │ Application       │ ║               ║ │ Application       │ ║
+    ║ │ Server            │ ║               ║ │ Server            │ ║
+    ║ └─────────┬─────────┘ ║               ║ └─────────┬─────────┘ ║
+    ║           │           ║               ║           │           ║
+    ║ ┌─────────▼─────────┐ ║               ║ ┌─────────▼─────────┐ ║
+    ║ │ Application Files │ ║               ║ │ Application Files │ ║
+    ║ │ (Code Base)       │ ║               ║ │ (Code Base)       │ ║
+    ║ └─────────┬─────────┘ ║               ║ └─────────┬─────────┘ ║
+    ║           │           ║               ║           │           ║
+    ║ ┌─────────▼─────────┐ ║               ║ ┌─────────▼─────────┐ ║
+    ║ │ MySQL Database    │ ║               ║ │ MySQL Database    │ ║
+    ║ │ PRIMARY           │◄═════════════════►│ REPLICA           │ ║
+    ║ │ (Writes + Reads)  │ ║   Replication   ║ │ (Reads only)      │ ║
+    ║ └───────────────────┘ ║               ║ └───────────────────┘ ║
+    ╚═══════════════════════╝               ╚═══════════════════════╝
+                |                                       |
+                └───────────────┬───────────────────────┘
+                                |
+                                ▼
+                    [Monitoring Dashboard]
+                    (Sumologic/Datadog/etc.)
+```
+
+## Step-by-Step Request Flow
+
+1. User types https://www.foobar.com in the browser
+2. DNS resolves domain to Load Balancer IP address
+3. HTTPS request goes through Firewall 1 (allows port 443)
+4. Load Balancer receives encrypted HTTPS traffic
+5. Load Balancer uses SSL certificate to decrypt HTTPS into HTTP
+6. Load Balancer distributes request to Server 1 or Server 2 (Round Robin)
+7. Request passes through Firewall 2 or 3 (allows port 80 from Load Balancer)
+8. Nginx receives HTTP request and forwards to Application Server
+9. Application Server executes code and queries MySQL database
+10. If write operation: goes to PRIMARY database
+11. If read operation: can go to PRIMARY or REPLICA database
+12. Monitoring agent collects metrics (CPU, memory, requests, errors)
+13. Response travels back through the same path to the user
+14. Monitoring data is sent to centralized monitoring dashboard
+
+## Explanation of Additional Elements
+
+### Why are we adding 3 Firewalls?
+
+We add one firewall before the Load Balancer and one firewall for each server (3 total) to create multiple layers of security. Firewall 1 protects the Load Balancer from internet threats and allows only ports 80 (HTTP) and 443 (HTTPS). Firewalls 2 and 3 protect each server individually, allowing traffic only from the Load Balancer and blocking direct internet access. This defense-in-depth approach ensures that if one firewall is bypassed, others still provide protection. Each firewall filters unwanted traffic, blocks unauthorized IPs, prevents DDoS attacks, and controls which ports are accessible.
+
+### What are Firewalls for?
+
+Firewalls control network traffic based on security rules. They act as barriers between trusted internal networks and untrusted external networks (the internet). Firewalls inspect incoming and outgoing packets and decide whether to allow or block them based on source IP, destination IP, port numbers, and protocols. They block unauthorized access attempts, prevent port scanning, protect against attacks, and allow only specific traffic like HTTP (port 80), HTTPS (port 443), and SSH (port 22) from authorized sources.
+
+### Why are we adding 1 SSL Certificate?
+
+We add an SSL certificate to enable HTTPS, which encrypts all traffic between users and our website. The certificate is installed on the Load Balancer to serve www.foobar.com securely. HTTPS protects sensitive data like passwords, credit card information, and personal data from being intercepted by attackers. It authenticates that users are connecting to the real foobar.com and not a fake site. Modern browsers require HTTPS and display warnings for HTTP sites. HTTPS is required for compliance with security standards like PCI-DSS and GDPR, and Google ranks HTTPS sites higher in search results.
+
+### Why is Traffic Served Over HTTPS?
+
+Traffic is served over HTTPS to encrypt data in transit and protect user privacy and security. Without HTTPS, all data travels as plain text and can be read by anyone monitoring the network (ISPs, hackers on public WiFi, etc.). HTTPS encrypts passwords, session tokens, personal information, and all communication between users and the server. It prevents man-in-the-middle attacks where attackers intercept and modify traffic. It proves the website's authenticity through certificate validation. It is required by modern web browsers and security best practices.
+
+### Why are we adding 3 Monitoring Clients?
+
+We add one monitoring client (data collector agent) on each server to collect real-time performance metrics, logs, and health data. Each monitoring agent runs as a background service and sends data to a centralized monitoring platform like Sumologic, Datadog, or Prometheus. This provides visibility into server health, performance, and issues. Monitoring helps detect problems before users are affected, track resource usage (CPU, memory, disk), identify slow requests and bottlenecks, alert on-call engineers when issues occur, and provide data for capacity planning and troubleshooting.
+
+### What is Monitoring Used For?
+
+Monitoring is used to ensure infrastructure reliability and performance. It tracks whether servers are up or down (availability monitoring), measures CPU, memory, disk, and network usage (resource monitoring), detects errors and slow requests (performance monitoring), identifies security threats and anomalies (security monitoring), provides alerts when thresholds are exceeded (alerting), creates dashboards for visualization (reporting), and maintains historical data for analysis (capacity planning). Without monitoring, you are blind to infrastructure health and problems until users complain.
+
+### How the Monitoring Tool is Collecting Data
+
+The monitoring agent runs continuously on each server as a background service. It collects data through multiple methods: reading system metrics from /proc filesystem (CPU, memory, disk), parsing log files in real-time (Nginx access logs, application logs, system logs), querying application APIs and endpoints (health checks, custom metrics), executing system commands (top, netstat, iostat), and collecting network statistics. The agent buffers data locally, then sends it to the monitoring backend via encrypted HTTPS connections at regular intervals (every 10-60 seconds). The backend stores data in a time-series database and displays it on dashboards with graphs, alerts, and reports.
+
+### How to Monitor Web Server QPS (Queries Per Second)
+
+To monitor web server QPS, you need to track the number of HTTP requests per second. Configure Nginx to log all requests to the access log with timestamps. The monitoring agent tails the Nginx access log file in real-time, counts the number of log entries per second, and calculates QPS as a rolling average. It sends this metric to the monitoring platform where you can visualize QPS over time, set alerts if QPS exceeds thresholds (indicating traffic spikes or attacks), and analyze QPS by endpoint, status code, and server. You can also use Nginx status module to expose a /nginx_status endpoint that shows total requests, which the agent queries periodically to calculate QPS.
+
+## Issues with This Infrastructure
+
+### 1. Terminating SSL at the Load Balancer Level is an Issue
+
+SSL termination at the Load Balancer means HTTPS is decrypted there and traffic flows as plain HTTP to backend servers. This creates a security vulnerability because traffic between the Load Balancer and servers is unencrypted. If an attacker gains access to the internal network (through compromised server, firewall misconfiguration, or insider threat), they can eavesdrop on all communication including passwords, session tokens, and personal data. This violates end-to-end encryption principles. Some compliance regulations require encryption throughout the entire network, not just at the edge. Solution: Implement end-to-end encryption by re-encrypting traffic from Load Balancer to servers using TLS, or secure the internal network with strong isolation and monitoring.
+
+### 2. Having Only One MySQL Server Capable of Accepting Writes is an Issue
+
+Only the PRIMARY database can accept write operations (INSERT, UPDATE, DELETE), while REPLICA databases are read-only. If the PRIMARY database fails or becomes unavailable, all write operations fail immediately. Users cannot create accounts, post content, place orders, or update data. The website becomes read-only even though servers and REPLICA databases are still running. There is no automatic failover to promote a REPLICA to PRIMARY without manual intervention. The PRIMARY database is a single point of failure (SPOF) for writes. It also becomes a performance bottleneck as all writes must go through one server, limiting write scalability. Solution: Implement multi-master replication where multiple databases can accept writes, use automatic failover solutions like MySQL Group Replication or Galera Cluster, or deploy database clustering with automated promotion of replicas.
+
+### 3. Having Servers with All the Same Components Might be a Problem
+
+Each server contains all three components: Web Server (Nginx), Application Server, and Database (MySQL). This creates several issues. First, it is difficult to scale components independently. If you need more web server capacity but not database capacity, you must add entire servers with all components, wasting resources. Second, components compete for resources on the same server. Database queries consume CPU and memory that could be used for web requests, causing performance degradation. A database spike affects web server performance. Third, security is compromised because a breach in the web layer immediately exposes the database layer since they are on the same server. Fourth, maintenance is complex as updating the database requires taking the entire server offline, affecting web traffic. Finally, cost efficiency suffers as you cannot optimize each component separately with different hardware specifications.
+
+Solution: Implement a three-tier architecture with separate dedicated servers for Web tier (Nginx only), Application tier (application servers only), and Database tier (MySQL only). This allows independent scaling where you can add web servers without adding databases, resource optimization as each tier has hardware suited to its needs, better security with network isolation between tiers, and easier maintenance as you can update one tier without affecting others.
+
+## Summary
+
+This infrastructure improves security with HTTPS encryption and firewalls, and adds monitoring for visibility into performance and health. However, it still has critical issues: SSL termination exposes internal traffic, a single writable database creates a SPOF for writes, and co-located components limit scalability and performance. A production infrastructure would need end-to-end encryption, database clustering with automatic failover, and separated architecture tiers for true scalability and reliability.
